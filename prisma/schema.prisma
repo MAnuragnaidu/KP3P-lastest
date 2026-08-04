@@ -1,0 +1,107 @@
+generator client {
+provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("POSTGRES_PRISMA_URL")
+  directUrl = env("POSTGRES_URL_NON_POOLING")
+}
+
+
+model User {
+id         Int      @id @default(autoincrement())
+email      String   @unique
+name       String
+role       String   @default("PATIENT")
+password   String
+phone      String?  @unique
+authUserId String?  @unique @db.Uuid
+createdAt  DateTime @default(now())
+updatedAt  DateTime @updatedAt
+
+patients  Patient[]
+}
+
+model Patient {
+id         Int      @id @default(autoincrement())
+userId     Int?
+user       User?    @relation(fields: [userId], references: [id])
+authUserId String?  @db.Uuid
+
+name             String
+email            String @default("")
+mrn              String
+contactPhone     String
+placeOfLiving    String
+referredBy       String
+dateOfBirth      String
+currentAge       Int
+ageAtDiagnosis   Int
+sex              String
+smokingStatus    String
+smokingDetails   String
+
+primaryDiagnosis  String
+diseaseDuration   String
+perianalDiseaseAssessment String @default("")
+montrealAgeAtDiagnosis String @default("")
+ucExtent               String @default("")
+diseaseLocation        String @default("")
+diseaseBehavior        String @default("")
+perianalDisease        String @default("")
+montrealClass     String
+sesCdScoring         String @default("{}")
+hbiScoring           String @default("{}")
+partialMayoScoring   String @default("{}")
+sesCdClinicalNotes   String @default("")
+upperGiFindings      String @default("{}")
+ucEndoscopicScoring  String @default("{}")
+previousSurgeries String
+
+currentDiseaseActivity String
+stoolFrequency         String
+bloodInStool           String
+abdominalPain          String
+impactOnQoL            String
+weightLoss             String
+activityScore          String @default("")
+
+dateMostRecentLabs   String
+ibdInvestigations    String @default("{}")
+radiologyInvestigations String @default("{}")
+
+surgeonSurgicalHistory   String @default("")
+radiologistFindings      String @default("")
+dietitianDietaryFindings String @default("")
+
+currentIbdMedicationsRows String @default("[]")
+failedTreatments          String
+responseToTreatment     String
+
+infectionScreening String @default("{\"sets\":[]}")
+
+influenza        String
+covid19          String
+pneumococcal     String
+hepatitisB       String
+hepatitisA       String
+hepatitisE       String
+zoster           String
+mmr              String @default("{}")
+varicella        String @default("{}")
+tetanusTdap      String
+
+comorbidities         String
+extraintestinalManif  String
+pregnancyPlanning     String
+preferredLanguage     String
+occupation            String
+specialConsiderations String
+
+assessmentComplete Boolean @default(false)
+assessmentCurrentStep Int @default(1)
+
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+}

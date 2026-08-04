@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run seed:rulebook-text && next build",
+  "installCommand": "npm ci",
+  "framework": "nextjs",
+  "functions": {
+    "src/app/api/generate-caresheet/route.ts": {
+      "maxDuration": 300
+    }
+  }
+}

@@ -1,0 +1,1212 @@
+import React from 'react';
+import {
+  applyNoneExclusiveToggle,
+  sanitizeNoneExclusiveSelection,
+} from '@/lib/none-exclusive-multi-select';
+import { PREVIOUS_IBD_SURGERY_OPTIONS } from '@/lib/previous-ibd-surgeries';
+import { getErrorMessage } from '@/lib/get-error-message';
+import {
+  composeMontrealClass,
+  isMontrealFieldRequired,
+  isMontrealFieldVisible,
+  montrealFieldsForDiagnosis,
+} from '@/lib/montreal-classification';
+import {
+  normalizeSesCdScoring,
+  parseSesCdScoring,
+  serializeSesCdScoring,
+} from '@/lib/ses-cd-scoring';
+import HarveyBradshawIndexForm from './HarveyBradshawIndexForm';
+import PartialMayoScoreForm from './PartialMayoScoreForm';
+import SesCdScoringTable from './SesCdScoringTable';
+import UpperGiFindingsTable from './UpperGiFindingsTable';
+import UcEndoscopicScoringTool from './UcEndoscopicScoringTool';
+import {
+  normalizeUcEndoscopicScoring,
+  parseUcEndoscopicScoring,
+  serializeUcEndoscopicScoring,
+  todayIsoDate,
+  isFutureIsoDate,
+} from '@/lib/uc-endoscopic-scoring';
+import IbdInvestigationsForm from './IbdInvestigationsForm';
+import RadiologyInvestigationsForm from './RadiologyInvestigationsForm';
+import CurrentIbdMedicationsTable from './CurrentIbdMedicationsTable';
+import InfectionScreeningForm from './InfectionScreeningForm';
+import type { AssessmentFormState, AssessmentUpdateFn } from '@/types/assessment-form';
+import {
+  fieldBorderColor,
+  fieldGroupErrorStyle,
+  FIELD_ERROR_LABEL,
+  useAssessmentFieldError,
+} from './assessment-field-errors';
+
+const inter = "'Inter', sans-serif";
+
+function formValue(data: AssessmentFormState, key: string): unknown {
+  return (data as Record<string, unknown>)[key];
+}
+
+type StepComponentProps = {
+  data: AssessmentFormState;
+  updateData: AssessmentUpdateFn;
+};
+
+// ── Shared field wrapper ──────────────────────────────────────────────
+const FieldBox = ({
+  label,
+  children,
+  required = false,
+  fieldKey,
+}: {
+  label: string;
+  children: React.ReactNode;
+  required?: boolean;
+  fieldKey?: string;
+}) => {
+  const hasError = useAssessmentFieldError(fieldKey ?? '');
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, ...fieldGroupErrorStyle(hasError) }}>
+      <label style={{
+        fontSize: 11, fontWeight: 700, letterSpacing: '0.07em',
+        textTransform: 'uppercase', color: hasError ? FIELD_ERROR_LABEL : '#475569', fontFamily: inter,
+      }}>
+        {label}
+        {required && <span style={{ color: '#dc2626', marginLeft: 4 }}>*</span>}
+      </label>
+      {children}
+    </div>
+  );
+};
+
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '10px 14px',
+  fontSize: 14,
+  fontWeight: 500,
+  fontFamily: inter,
+  color: '#0f172a',
+  background: '#ffffff',
+  border: '1px solid #cbd5e1',
+  borderRadius: 10,
+  outline: 'none',
+  boxSizing: 'border-box',
+  transition: 'border-color 0.15s',
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────
+function TextInputField({
+  name,
+  label,
+  type = 'text',
+  data,
+  updateData,
+  required = false,
+}: {
+  name: string;
+  label: string;
+  type?: string;
+  data: AssessmentFormState;
+  updateData: AssessmentUpdateFn;
+  required?: boolean;
+}) {
+  const hasError = useAssessmentFieldError(name);
+  const [focused, setFocused] = React.useState(false);
+  return (
+    <FieldBox label={label} required={required} fieldKey={name}>
+      <input
+        type={type}
+        style={{
+          ...inputStyle,
+          borderColor: fieldBorderColor(hasError, focused),
+          background: hasError ? '#fef2f2' : '#ffffff',
+        }}
+        required={required}
+        value={(() => {
+          const v = formValue(data, name);
+          return v === '' || v == null ? '' : String(v);
+        })()}
+        onChange={(e) => {
+          const raw = e.target.value;
+          if (type === 'number') {
+            updateData({ [name]: raw === '' ? '' : Number(raw) });
+          } else {
+            updateData({ [name]: raw });
+          }
+        }}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      />
+    </FieldBox>
+  );
+}
+
+export const textInput = (
+  name: string,
+  label: string,
+  type: string = 'text',
+  data: AssessmentFormState,
+  updateData: AssessmentUpdateFn,
+  required: boolean = false,
+) => (
+  <TextInputField
+    key={name}
+    name={name}
+    label={label}
+    type={type}
+    data={data}
+    updateData={updateData}
+    required={required}
+  />
+);
+
+function TextAreaField({
+  name,
+  label,
+  data,
+  updateData,
+  required = false,
+  helpText,
+  helpExample,
+}: {
+  name: string;
+  label: string;
+  data: AssessmentFormState;
+  updateData: AssessmentUpdateFn;
+  required?: boolean;
+  helpText?: string;
+  helpExample?: string;
+}) {
+  const hasError = useAssessmentFieldError(name);
+  const [focused, setFocused] = React.useState(false);
+  return (
+    <FieldBox label={label} required={required} fieldKey={name}>
+      <textarea
+        style={{
+          ...inputStyle,
+          resize: 'vertical',
+          minHeight: 80,
+          borderColor: fieldBorderColor(hasError, focused),
+          background: hasError ? '#fef2f2' : '#ffffff',
+        }}
+        rows={3}
+        required={required}
+        value={String(formValue(data, name) ?? '')}
+        onChange={(e) => updateData({ [name]: e.target.value })}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      />
+      {helpText && (
+        <p style={{ fontSize: 11, color: '#64748b', margin: '8px 0 0', fontFamily: inter, lineHeight: 1.45 }}>
+          {helpText}
+        </p>
+      )}
+      {helpExample && (
+        <p style={{ fontSize: 11, color: '#64748b', margin: '6px 0 0', fontFamily: inter, lineHeight: 1.45 }}>
+          {helpExample}
+        </p>
+      )}
+    </FieldBox>
+  );
+}
+
+export const textArea = (
+  name: string,
+  label: string,
+  data: AssessmentFormState,
+  updateData: AssessmentUpdateFn,
+  required: boolean = false,
+  helpText?: string,
+  helpExample?: string,
+) => (
+  <TextAreaField
+    key={name}
+    name={name}
+    label={label}
+    data={data}
+    updateData={updateData}
+    required={required}
+    helpText={helpText}
+    helpExample={helpExample}
+  />
+);
+
+function RadioGroupField({
+  name,
+  label,
+  options,
+  data,
+  updateData,
+  required = false,
+}: {
+  name: string;
+  label: string;
+  options: string[];
+  data: AssessmentFormState;
+  updateData: AssessmentUpdateFn;
+  required?: boolean;
+}) {
+  const hasError = useAssessmentFieldError(name);
+  return (
+    <div key={name} style={{ display: 'flex', flexDirection: 'column', gap: 8, ...fieldGroupErrorStyle(hasError) }}>
+      <label style={{
+        fontSize: 11, fontWeight: 700, letterSpacing: '0.07em',
+        textTransform: 'uppercase', color: hasError ? FIELD_ERROR_LABEL : '#475569', fontFamily: inter,
+      }}>
+        {label}
+        {required && <span style={{ color: '#dc2626', marginLeft: 4 }}>*</span>}
+      </label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {options.map((opt, i) => {
+          const isSelected = formValue(data, name) === opt;
+          return (
+            <label key={opt} style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
+              border: `1px solid ${isSelected ? '#0891b2' : hasError ? '#fca5a5' : '#cbd5e1'}`,
+              background: isSelected ? '#ecfeff' : hasError ? '#fff1f2' : '#ffffff',
+              fontFamily: inter, fontSize: 13, fontWeight: 600,
+              color: isSelected ? '#0e7490' : '#374151',
+              transition: 'all 0.15s',
+            }}>
+              <input
+                type="radio"
+                name={name}
+                value={opt}
+                checked={isSelected}
+                required={required && i === 0}
+                onChange={(e) => updateData({ [name]: e.target.value })}
+                style={{ accentColor: '#0891b2', width: 14, height: 14 }}
+              />
+              {opt}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export const radioGroup = (
+  name: string,
+  label: string,
+  options: string[],
+  data: AssessmentFormState,
+  updateData: AssessmentUpdateFn,
+  required: boolean = false,
+) => (
+  <RadioGroupField
+    name={name}
+    label={label}
+    options={options}
+    data={data}
+    updateData={updateData}
+    required={required}
+  />
+);
+
+function CheckboxGroupField({
+  name,
+  label,
+  options,
+  data,
+  updateData,
+  required = false,
+}: {
+  name: string;
+  label: string;
+  options: string[];
+  data: AssessmentFormState;
+  updateData: AssessmentUpdateFn;
+  required?: boolean;
+}) {
+  const hasError = useAssessmentFieldError(name);
+  const raw = formValue(data, name);
+  const selected = sanitizeNoneExclusiveSelection(
+    Array.isArray(raw) ? (raw as string[]) : [],
+  );
+  const hasNoneOption = options.includes('None');
+  const handleToggle = (opt: string) => {
+    updateData({ [name]: applyNoneExclusiveToggle(selected, opt, hasNoneOption) });
+  };
+
+  return (
+    <div key={name} style={{ display: 'flex', flexDirection: 'column', gap: 8, ...fieldGroupErrorStyle(hasError) }}>
+      <label style={{
+        fontSize: 11, fontWeight: 700, letterSpacing: '0.07em',
+        textTransform: 'uppercase', color: hasError ? FIELD_ERROR_LABEL : '#475569', fontFamily: inter,
+      }}>
+        {label}
+        {required && <span style={{ color: '#dc2626', marginLeft: 4 }}>*</span>}
+      </label>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+        {options.map((opt) => {
+          const isSelected = selected.includes(opt);
+          return (
+            <label key={opt} style={{
+              display: 'flex', alignItems: 'center', gap: 7,
+              padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
+              border: `1px solid ${isSelected ? '#0891b2' : hasError ? '#fca5a5' : '#cbd5e1'}`,
+              background: isSelected ? '#ecfeff' : hasError ? '#fff1f2' : '#ffffff',
+              fontFamily: inter, fontSize: 13, fontWeight: 600,
+              color: isSelected ? '#0e7490' : '#374151',
+              transition: 'all 0.15s',
+            }}>
+              <input
+                type="checkbox"
+                checked={isSelected}
+                onChange={() => handleToggle(opt)}
+                style={{ accentColor: '#0891b2', width: 14, height: 14 }}
+              />
+              {opt}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export const checkboxGroup = (
+  name: string,
+  label: string,
+  options: string[],
+  data: AssessmentFormState,
+  updateData: AssessmentUpdateFn,
+  required: boolean = false,
+) => (
+  <CheckboxGroupField
+    name={name}
+    label={label}
+    options={options}
+    data={data}
+    updateData={updateData}
+    required={required}
+  />
+);
+
+// ── Grid wrapper ──────────────────────────────────────────────────────
+const Grid2 = ({ children }: { children: React.ReactNode }) => (
+  <div
+    className="aw-grid-2"
+    style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+      gap: '20px 24px',
+      marginBottom: 20,
+    }}
+  >
+    {children}
+  </div>
+);
+
+/** Single-column stack (e.g. Screening step full width). */
+const ColumnStack = ({ children }: { children: React.ReactNode }) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    {children}
+  </div>
+);
+
+const STEP_SECTION_HEADER = '#0e7490';
+
+const StepFormSection = ({
+  title,
+  headerAside,
+  children,
+}: {
+  title: string;
+  headerAside?: React.ReactNode;
+  children: React.ReactNode;
+}) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+    <div
+      style={{
+        padding: '8px 12px',
+        background: STEP_SECTION_HEADER,
+        borderRadius: '8px 8px 0 0',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 12,
+        flexWrap: 'wrap',
+      }}
+    >
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.05em',
+          textTransform: 'uppercase',
+          color: '#ffffff',
+          fontFamily: inter,
+          lineHeight: 1.25,
+        }}
+      >
+        {title}
+      </span>
+      {headerAside}
+    </div>
+    <div
+      style={{
+        border: `1px solid ${STEP_SECTION_HEADER}`,
+        borderTop: 'none',
+        borderRadius: '0 0 8px 8px',
+        padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 20,
+        background: '#ffffff',
+      }}
+    >
+      {children}
+    </div>
+  </div>
+);
+
+const Grid3 = ({ children }: { children: React.ReactNode }) => (
+  <div
+    className="aw-grid-3"
+    style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+      gap: '20px 24px',
+      marginBottom: 20,
+    }}
+  >
+    {children}
+  </div>
+);
+
+const Divider = ({ label }: { label: string }) => (
+  <h3 style={{
+    fontSize: 14, fontWeight: 700, color: '#0891b2',
+    fontFamily: inter, marginBottom: 14, marginTop: 8,
+    paddingBottom: 8, borderBottom: '1px solid #e2e8f0',
+  }}>
+    {label}
+  </h3>
+);
+
+const FieldSection = ({
+  label,
+  description,
+  headerAside,
+  children,
+}: {
+  label: string;
+  description?: string;
+  headerAside?: React.ReactNode;
+  children: React.ReactNode;
+}) => (
+  <div style={{
+    border: '1px solid #e2e8f0',
+    borderRadius: 12,
+    padding: '18px 20px',
+    background: '#f8fafc',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 16,
+  }}>
+    <div style={{
+      display: 'flex',
+      alignItems: 'flex-start',
+      justifyContent: 'space-between',
+      gap: 16,
+      flexWrap: 'wrap',
+    }}>
+      <div>
+        <h4 style={{
+          fontSize: 12,
+          fontWeight: 700,
+          letterSpacing: '0.07em',
+          textTransform: 'uppercase',
+          color: '#475569',
+          fontFamily: inter,
+          margin: 0,
+        }}>
+          {label}
+        </h4>
+        {description ? (
+          <p style={{
+            fontSize: 12,
+            color: '#64748b',
+            fontFamily: inter,
+            lineHeight: 1.5,
+            margin: '6px 0 0',
+          }}>
+            {description}
+          </p>
+        ) : null}
+      </div>
+      {headerAside}
+    </div>
+    {children}
+  </div>
+);
+
+// ── Steps ─────────────────────────────────────────────────────────────
+export const AdminStep1 = ({ data, updateData }: StepComponentProps) => {
+  const handleDobUpdate = (fields: Record<string, unknown>) => {
+    updateData(fields);
+    const dobRaw = fields.dateOfBirth;
+    if (typeof dobRaw === 'string' && dobRaw.trim() !== '') {
+      const dob = new Date(dobRaw);
+      const today = new Date();
+      let age = today.getFullYear() - dob.getFullYear();
+      const m = today.getMonth() - dob.getMonth();
+      if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) age--;
+      updateData({ currentAge: Math.max(0, age) });
+    }
+  };
+
+  return (
+    <div>
+      <Grid2>
+        {textInput('name', 'Name', 'text', data, updateData, true)}
+        {textInput('email', 'Email', 'email', data, updateData, true)}
+        {textInput('mrn', 'ID / MRN', 'text', data, updateData, true)}
+        {textInput('contactPhone', 'Contact Phone', 'text', data, updateData, true)}
+        {textInput('placeOfLiving', 'Place of Living', 'text', data, updateData, true)}
+        {textInput('referredBy', 'Referred By', 'text', data, updateData, true)}
+        {textInput('dateOfBirth', 'Date of Birth', 'date', data, handleDobUpdate, true)}
+        {textInput('currentAge', 'Current Age', 'number', data, updateData, true)}
+        <div style={{ minWidth: 0 }}>
+          {radioGroup('sex', 'Sex', ['Male', 'Female', 'Other'], data, updateData, true)}
+        </div>
+      </Grid2>
+      <div style={{ marginTop: 20 }}>
+        {textInput('occupation', 'Occupation', 'text', data, updateData)}
+      </div>
+      <div style={{ marginTop: 20 }}>
+        {radioGroup('smokingStatus', 'Smoking Status', ['Current smoker', 'Ex smoker', 'Never smoked'], data, updateData, true)}
+      </div>
+      {(data.smokingStatus === 'Current smoker' ||
+        data.smokingStatus === 'Ex smoker' ||
+        data.smokingStatus === 'Current' ||
+        data.smokingStatus === 'Former') && (
+        <div style={{ marginTop: 20 }}>
+          {textArea(
+            'smokingDetails',
+            'Smoking amount (e.g. packs per day, cigarettes/day, pack-years)',
+            data,
+            updateData,
+            true,
+          )}
+        </div>
+      )}
+      <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 20 }}>
+        {radioGroup('preferredLanguage', "Patient's Preferred Language for Care Plan", [
+          'English',
+          'Telugu',
+          'Hindi',
+          'Tamil',
+          'Kannada',
+          'Bengali',
+          'Malayalam',
+          'Marathi',
+          'Punjabi',
+        ], data, updateData)}
+        {textArea('specialConsiderations', 'Special Considerations (Travel, Dietary, etc.)', data, updateData)}
+      </div>
+    </div>
+  );
+};
+
+type VaccineDose = { date?: string; dosage?: string };
+
+// Parses vaccine field which may be a JSON object {status, doses} or plain string
+const parseVaccine = (val: unknown): { status: string; doses: VaccineDose[] } => {
+  if (val == null || val === '') return { status: '', doses: [] };
+  if (typeof val === 'object' && !Array.isArray(val)) {
+    const o = val as Record<string, unknown>;
+    const status = typeof o.status === 'string' ? o.status : '';
+    const d = o.doses;
+    const doses = Array.isArray(d)
+      ? d.filter((x): x is VaccineDose => x !== null && typeof x === 'object' && !Array.isArray(x)).map((x) => {
+          const row = x as Record<string, unknown>;
+          return {
+            date: typeof row.date === 'string' ? row.date : undefined,
+            dosage: typeof row.dosage === 'string' ? row.dosage : undefined,
+          };
+        })
+      : [];
+    return { status, doses };
+  }
+  if (typeof val === 'string') {
+    try {
+      return parseVaccine(JSON.parse(val) as unknown);
+    } catch {
+      return { status: val, doses: [] };
+    }
+  }
+  return { status: '', doses: [] };
+};
+
+const VaccineInput = ({
+  name,
+  label,
+  data,
+  updateData,
+}: {
+  name: string;
+  label: string;
+  data: AssessmentFormState;
+  updateData: AssessmentUpdateFn;
+}) => {
+  const vaccine = parseVaccine(formValue(data, name));
+  const statusOptions = ['Given', 'Never', 'Unknown'];
+
+  const updateVaccine = (patch: Partial<typeof vaccine>) => {
+    updateData({ [name]: { ...vaccine, ...patch } });
+  };
+
+  const updateDoseField = (i: number, field: keyof VaccineDose, value: string) => {
+    const doses = [...(vaccine.doses || [])];
+    doses[i] = { ...doses[i], [field]: value };
+    updateVaccine({ doses });
+  };
+
+  const addDose = () => {
+    updateVaccine({ doses: [...(vaccine.doses || []), { date: '', dosage: '' }] });
+  };
+
+  const removeDose = (i: number) => {
+    const doses = vaccine.doses.filter((_d: VaccineDose, idx: number) => idx !== i);
+    updateVaccine({ doses });
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#64748b', fontFamily: inter }}>
+        {label}
+      </label>
+      {/* Status selector */}
+      <div style={{ display: 'flex', gap: 6 }}>
+        {statusOptions.map((opt) => {
+          const isSelected = vaccine.status?.toLowerCase() === opt.toLowerCase();
+          return (
+            <button key={opt} type="button" onClick={() => updateVaccine({ status: opt.toLowerCase() })} style={{
+              flex: 1, padding: '7px 4px', fontSize: 12, fontWeight: 600, fontFamily: inter,
+              borderRadius: 8, border: `1px solid ${isSelected ? '#0891b2' : '#cbd5e1'}`,
+              background: isSelected ? '#ecfeff' : '#ffffff',
+              color: isSelected ? '#0e7490' : '#64748b', cursor: 'pointer',
+            }}>
+              {opt}
+            </button>
+          );
+        })}
+      </div>
+      {/* Dose date + dosage (matches patient intake Step8Vaccination) — only if Given */}
+      {vaccine.status?.toLowerCase() === 'given' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {(vaccine.doses || []).map((dose: VaccineDose, i: number) => (
+            <div
+              key={i}
+              style={{
+                display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'flex-end',
+                padding: '10px 10px', borderRadius: 10, border: '1px solid #e2e8f0', background: '#fafafa',
+              }}
+            >
+              <div style={{ flex: '1 1 140px', minWidth: 0 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', fontFamily: inter, letterSpacing: '0.06em' }}>DATE</span>
+                <input
+                  type="date"
+                  value={dose.date ? String(dose.date).substring(0, 10) : ''}
+                  onChange={(e) => updateDoseField(i, 'date', e.target.value)}
+                  style={{ ...inputStyle, fontSize: 12, padding: '7px 10px', width: '100%', marginTop: 4 }}
+                />
+              </div>
+              <div style={{ flex: '2 1 200px', minWidth: 0 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: '#64748b', fontFamily: inter, letterSpacing: '0.06em' }}>DOSAGE / BRAND / TYPE</span>
+                <input
+                  type="text"
+                  value={dose.dosage ?? ''}
+                  onChange={(e) => updateDoseField(i, 'dosage', e.target.value)}
+                  placeholder="e.g. 0.5 mL IM"
+                  style={{ ...inputStyle, fontSize: 12, padding: '7px 10px', width: '100%', marginTop: 4 }}
+                />
+              </div>
+              <button type="button" onClick={() => removeDose(i)} style={{
+                background: '#fff1f2', border: '1px solid #fecdd3', color: '#e11d48',
+                borderRadius: 7, padding: '8px 10px', fontSize: 12, cursor: 'pointer', fontFamily: inter, flexShrink: 0,
+              }}>✕</button>
+            </div>
+          ))}
+          <button type="button" onClick={addDose} style={{
+            marginTop: 2, padding: '6px 10px', fontSize: 11, fontWeight: 600,
+            background: '#f0fdfa', border: '1px solid #99f6e4', color: '#0f766e',
+            borderRadius: 7, cursor: 'pointer', fontFamily: inter, textAlign: 'left',
+          }}>
+            + Add dose
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const vaccineFields = [
+  { name: 'influenza', label: 'Influenza' },
+  { name: 'covid19', label: 'COVID-19' },
+  { name: 'pneumococcal', label: 'Pneumococcal' },
+  { name: 'hepatitisB', label: 'Hepatitis B' },
+  { name: 'hepatitisA', label: 'Hepatitis A' },
+  { name: 'hepatitisE', label: 'Hepatitis E' },
+  { name: 'zoster', label: 'Zoster' },
+  { name: 'mmr', label: 'MMR' },
+  { name: 'varicella', label: 'Varicella' },
+  { name: 'tetanusTdap', label: 'Tetanus / Tdap' },
+];
+
+export const AdminStep2 = ({ data, updateData }: StepComponentProps) => (
+  <div>
+    <Grid3>
+      {vaccineFields.map(({ name, label }) => (
+        <VaccineInput key={name} name={name} label={label} data={data} updateData={updateData} />
+      ))}
+    </Grid3>
+  </div>
+);
+
+// Must match mygastro-patient Step2DiseaseChar so imported values show as selected.
+const PATIENT_PRIMARY_DIAGNOSIS = ['Ulcerative Colitis', "Crohn's Disease", 'IBD-U'] as const;
+const PATIENT_DISEASE_DURATIONS = [
+  '<3 months',
+  '3–12 months',
+  '1–2 years',
+  '2–5 years',
+  '5–10 years',
+  '>10 years',
+] as const;
+
+const MONTREAL_AGE_AT_DIAGNOSIS = [
+  'A1 (Less 16)',
+  'A2 (16 - 40)',
+  'A3 (More than 40)',
+] as const;
+
+const UC_EXTENT_OPTIONS = [
+  'E1 - Ulcerative proctitis',
+  'E2 - Left sided UC (distal UC)',
+  'E3 - Extensive UC (pancolitis)',
+] as const;
+
+const DISEASE_LOCATIONS = [
+  'L1 (Ileal)',
+  'L2 (Colonic)',
+  'L3 (Ileocolonic)',
+  'L4 (Upper GI)',
+] as const;
+
+const DISEASE_BEHAVIORS = [
+  'B1 (Inflamatory)',
+  'B2 (Stricturing)',
+  'B3 (Penetrqting)',
+] as const;
+
+const PERIANAL_OPTIONS = ['P (Yes)', 'No'] as const;
+
+function ScoringDateField({
+  fieldKey,
+  label,
+  value,
+  max,
+  onChange,
+}: {
+  fieldKey: string;
+  label: string;
+  value: string;
+  max: string;
+  onChange: (date: string) => void;
+}) {
+  const hasError = useAssessmentFieldError(fieldKey);
+  const [focused, setFocused] = React.useState(false);
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6,
+      minWidth: 180,
+      ...fieldGroupErrorStyle(hasError),
+    }}>
+      <label style={{
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: '0.07em',
+        textTransform: 'uppercase',
+        color: hasError ? FIELD_ERROR_LABEL : '#475569',
+        fontFamily: inter,
+      }}>
+        {label}
+      </label>
+      <input
+        type="date"
+        style={{
+          ...inputStyle,
+          width: 180,
+          padding: '8px 12px',
+          fontSize: 13,
+          borderColor: fieldBorderColor(hasError, focused),
+          background: hasError ? '#fef2f2' : '#ffffff',
+        }}
+        value={value}
+        max={max}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+      />
+    </div>
+  );
+}
+
+export const AdminStep4 = ({ data, updateData }: StepComponentProps) => {
+  const diagnosis = data.primaryDiagnosis;
+
+  const updateMontrealField: AssessmentUpdateFn = (patch) => {
+    const merged = { ...(data as Record<string, unknown>), ...patch };
+    const montrealFields = {
+      montrealAgeAtDiagnosis: merged.montrealAgeAtDiagnosis,
+      ucExtent: merged.ucExtent,
+      diseaseLocation: merged.diseaseLocation,
+      diseaseBehavior: merged.diseaseBehavior,
+      perianalDisease: merged.perianalDisease,
+    };
+    updateData({
+      ...patch,
+      montrealClass: composeMontrealClass(montrealFieldsForDiagnosis(diagnosis, montrealFields)),
+    });
+  };
+
+  const updatePrimaryDiagnosis: AssessmentUpdateFn = (patch) => {
+    const nextDiagnosis = String(patch.primaryDiagnosis ?? diagnosis ?? '').trim();
+    if (nextDiagnosis === "Crohn's Disease") {
+      updateData({
+        ...patch,
+        ucExtent: '',
+        montrealClass: composeMontrealClass(
+          montrealFieldsForDiagnosis(nextDiagnosis, {
+            montrealAgeAtDiagnosis: data.montrealAgeAtDiagnosis,
+            diseaseLocation: data.diseaseLocation,
+            diseaseBehavior: data.diseaseBehavior,
+            perianalDisease: data.perianalDisease,
+          }),
+        ),
+      });
+      return;
+    }
+    if (nextDiagnosis !== "Crohn's Disease") {
+      updateData({
+        ...patch,
+        diseaseLocation: '',
+        diseaseBehavior: '',
+        perianalDisease: '',
+        ucExtent: nextDiagnosis === 'Ulcerative Colitis' ? data.ucExtent : '',
+        montrealClass: composeMontrealClass(
+          montrealFieldsForDiagnosis(nextDiagnosis, {
+            montrealAgeAtDiagnosis: data.montrealAgeAtDiagnosis,
+            ucExtent: nextDiagnosis === 'Ulcerative Colitis' ? data.ucExtent : '',
+          }),
+        ),
+      });
+      return;
+    }
+    updateData(patch);
+  };
+
+  const montrealFields = {
+    montrealAgeAtDiagnosis: data.montrealAgeAtDiagnosis,
+    ucExtent: data.ucExtent,
+    diseaseLocation: data.diseaseLocation,
+    diseaseBehavior: data.diseaseBehavior,
+    perianalDisease: data.perianalDisease,
+  };
+  const montrealClassSummary = composeMontrealClass(
+    montrealFieldsForDiagnosis(diagnosis, montrealFields),
+  );
+  const sesCdScoring = normalizeSesCdScoring(parseSesCdScoring(data.sesCdScoring));
+  const ucEndoscopicScoring = normalizeUcEndoscopicScoring(
+    parseUcEndoscopicScoring(data.ucEndoscopicScoring),
+  );
+
+  const updateSesCdScoringDate = (date: string) => {
+    if (date && isFutureIsoDate(date)) return;
+    updateData({
+      sesCdScoring: serializeSesCdScoring({ ...sesCdScoring, scoringDate: date }),
+    });
+  };
+
+  const updateUcScoringDate = (date: string) => {
+    if (date && isFutureIsoDate(date)) return;
+    updateData({
+      ucEndoscopicScoring: serializeUcEndoscopicScoring({ ...ucEndoscopicScoring, scoringDate: date }),
+    });
+  };
+
+  return (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <Grid2>
+      {radioGroup('primaryDiagnosis', 'Primary Diagnosis', [...PATIENT_PRIMARY_DIAGNOSIS], data, updatePrimaryDiagnosis, true)}
+      {textInput('ageAtDiagnosis', 'Age at Diagnosis', 'number', data, updateData, true)}
+    </Grid2>
+    <div>
+      {radioGroup('diseaseDuration', 'Disease Duration', [...PATIENT_DISEASE_DURATIONS], data, updateData, true)}
+    </div>
+    {data.primaryDiagnosis === "Crohn's Disease" && (
+      <FieldSection
+        label="Harvey-Bradshaw Index (HBI)  —  Crohn's Disease Activity Score"
+        description="Enter patient details and today's symptoms. Score calculates automatically."
+      >
+        <HarveyBradshawIndexForm data={data} updateData={updateData} />
+      </FieldSection>
+    )}
+    {data.primaryDiagnosis === 'Ulcerative Colitis' && (
+      <FieldSection
+        label="Partial Mayo Score (pMayo)  —  Ulcerative Colitis Activity Index"
+      >
+        <PartialMayoScoreForm data={data} updateData={updateData} />
+      </FieldSection>
+    )}
+    {data.primaryDiagnosis === 'Ulcerative Colitis' && (
+      <FieldSection
+        label="UC Endoscopic Scoring Tool"
+        description="Ulcerative Colitis  ·  Mayo Endoscopic Score  +  UCEIS  ·  Auto-calculated"
+        headerAside={(
+          <ScoringDateField
+            fieldKey="ucEndoscopicScoring.scoringDate"
+            label="Scoring Date"
+            value={ucEndoscopicScoring.scoringDate ? String(ucEndoscopicScoring.scoringDate).substring(0, 10) : todayIsoDate()}
+            max={todayIsoDate()}
+            onChange={updateUcScoringDate}
+          />
+        )}
+      >
+        <UcEndoscopicScoringTool data={data} updateData={updateData} />
+      </FieldSection>
+    )}
+    {data.primaryDiagnosis === "Crohn's Disease" && (
+      <FieldSection
+        label="SES-CD Scoring"
+        description="Score each variable for each segment using the dropdown"
+        headerAside={(
+          <ScoringDateField
+            fieldKey="sesCdScoring.scoringDate"
+            label="Scoring Date"
+            value={sesCdScoring.scoringDate ? String(sesCdScoring.scoringDate).substring(0, 10) : todayIsoDate()}
+            max={todayIsoDate()}
+            onChange={updateSesCdScoringDate}
+          />
+        )}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <SesCdScoringTable data={data} updateData={updateData} />
+          <UpperGiFindingsTable data={data} updateData={updateData} />
+        </div>
+      </FieldSection>
+    )}
+    {(diagnosis === 'Ulcerative Colitis' || diagnosis === "Crohn's Disease") && (
+    <FieldSection label="Montreal Classification">
+      <div style={{
+        display: 'flex',
+        alignItems: 'baseline',
+        gap: 8,
+        flexWrap: 'wrap',
+        padding: '10px 14px',
+        borderRadius: 10,
+        background: '#ffffff',
+        border: '1px solid #cbd5e1',
+      }}>
+        <span style={{
+          fontSize: 11,
+          fontWeight: 700,
+          letterSpacing: '0.07em',
+          textTransform: 'uppercase',
+          color: '#475569',
+          fontFamily: inter,
+        }}>
+          Montreal Classification
+        </span>
+        <span style={{
+          fontSize: 15,
+          fontWeight: 700,
+          color: montrealClassSummary ? '#0e7490' : '#94a3b8',
+          fontFamily: inter,
+          minHeight: 20,
+        }}>
+          {montrealClassSummary}
+        </span>
+      </div>
+      <ColumnStack>
+        {isMontrealFieldVisible(diagnosis, 'montrealAgeAtDiagnosis') &&
+          radioGroup(
+            'montrealAgeAtDiagnosis',
+            'Age at Diagnosis',
+            [...MONTREAL_AGE_AT_DIAGNOSIS],
+            data,
+            updateMontrealField,
+            isMontrealFieldRequired(diagnosis, 'montrealAgeAtDiagnosis'),
+          )}
+        {isMontrealFieldVisible(diagnosis, 'ucExtent') &&
+          radioGroup(
+            'ucExtent',
+            'Extent of UC',
+            [...UC_EXTENT_OPTIONS],
+            data,
+            updateMontrealField,
+            isMontrealFieldRequired(diagnosis, 'ucExtent'),
+          )}
+        {isMontrealFieldVisible(diagnosis, 'diseaseLocation') &&
+          radioGroup(
+            'diseaseLocation',
+            'Location of the disease',
+            [...DISEASE_LOCATIONS],
+            data,
+            updateMontrealField,
+            isMontrealFieldRequired(diagnosis, 'diseaseLocation'),
+          )}
+        {isMontrealFieldVisible(diagnosis, 'diseaseBehavior') &&
+          radioGroup(
+            'diseaseBehavior',
+            'Behavior',
+            [...DISEASE_BEHAVIORS],
+            data,
+            updateMontrealField,
+            isMontrealFieldRequired(diagnosis, 'diseaseBehavior'),
+          )}
+        {isMontrealFieldVisible(diagnosis, 'perianalDisease') &&
+          radioGroup(
+            'perianalDisease',
+            'Perianal',
+            [...PERIANAL_OPTIONS],
+            data,
+            updateMontrealField,
+            isMontrealFieldRequired(diagnosis, 'perianalDisease'),
+          )}
+      </ColumnStack>
+    </FieldSection>
+    )}
+    {data.primaryDiagnosis === "Crohn's Disease" && (
+      <FieldBox label="Perianal Disease Assessment">
+        <textarea
+          style={{ ...inputStyle, resize: 'vertical', minHeight: 80 }}
+          rows={3}
+          value={data.perianalDiseaseAssessment || ''}
+          onChange={(e) => updateData({ perianalDiseaseAssessment: e.target.value })}
+          onFocus={(e) => (e.target.style.borderColor = '#0891b2')}
+          onBlur={(e) => (e.target.style.borderColor = '#cbd5e1')}
+        />
+        <p style={{ fontSize: 11, color: '#64748b', margin: '6px 0 0', fontFamily: inter, lineHeight: 1.45 }}>
+          Describe fistulas, abscesses, drainage, MRI findings if applicable
+        </p>
+      </FieldBox>
+    )}
+    {checkboxGroup('previousSurgeries', 'Previous IBD Surgeries', [...PREVIOUS_IBD_SURGERY_OPTIONS], data, updateData, true)}
+  </div>
+  );
+};
+
+export const AdminStep5 = ({ data, updateData }: StepComponentProps) => (
+  <div>
+    <Grid2>
+      {radioGroup('currentDiseaseActivity', 'Current Disease Activity Level', ['Remission', 'Mild', 'Moderate', 'Severe'], data, updateData, true)}
+      <FieldBox label="Activity Score (Short answer)">
+        <input
+          type="text"
+          style={inputStyle}
+          value={data.activityScore || ''}
+          onChange={(e) => updateData({ activityScore: e.target.value })}
+          onFocus={(e) => (e.target.style.borderColor = '#0891b2')}
+          onBlur={(e) => (e.target.style.borderColor = '#cbd5e1')}
+        />
+        <p style={{ fontSize: 11, color: '#64748b', margin: 0, fontFamily: inter }}>
+          Mayo score (UC) or Harvey-Bradshaw/CDAI (CD)
+        </p>
+      </FieldBox>
+      {radioGroup('stoolFrequency', 'Frequency of Stools (per day)', ['Normal', '1-3', '4-6', '>6'], data, updateData, true)}
+      {radioGroup('bloodInStool', 'Blood in Stool', ['None', 'Trace', 'Frequently visible', 'Mostly Blood'], data, updateData)}
+      {radioGroup('abdominalPain', 'Abdominal Pain', ['None', 'Mild', 'Moderate', 'Severe'], data, updateData)}
+      {radioGroup('impactOnQoL', 'Impact on Quality of Life', ['None', 'Mild', 'Moderate', 'Severe'], data, updateData)}
+      {radioGroup('weightLoss', 'Weight Loss', ['Yes', 'No'], data, updateData)}
+    </Grid2>
+  </div>
+);
+
+export const AdminStep6 = ({ data, updateData }: StepComponentProps) => (
+  <IbdInvestigationsForm data={data} updateData={updateData} />
+);
+
+export const AdminStep7 = ({ data, updateData }: StepComponentProps) => (
+  <RadiologyInvestigationsForm data={data} updateData={updateData} />
+);
+
+export const AdminStep8 = ({ data, updateData }: StepComponentProps) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <CurrentIbdMedicationsTable data={data} updateData={updateData} />
+    {radioGroup(
+      'responseToTreatment',
+      'Response to Current Treatment* (Based on HBI or Partial Mayo scores)',
+      [
+        'Excellent response (Remission)',
+        'Partial response (improved but no remission)',
+        'No response',
+        'Secondary loss of response (worked initially but now failing)',
+        'Not applicable (Not yet on treatment)',
+      ],
+      data,
+      updateData,
+      false,
+    )}
+  </div>
+);
+
+export const AdminStep10 = ({ data, updateData }: StepComponentProps) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    {textArea('surgeonSurgicalHistory', 'Surgical History', data, updateData, true)}
+  </div>
+);
+
+export const AdminStep11 = ({ data, updateData }: StepComponentProps) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    {textArea('radiologistFindings', 'Radiology Findings', data, updateData, true)}
+  </div>
+);
+
+export const AdminStep12 = ({ data, updateData }: StepComponentProps) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    {textArea('dietitianDietaryFindings', 'Dietary Findings', data, updateData, true)}
+  </div>
+);
+
+export const AdminStep9 = ({ data, updateData }: StepComponentProps) => (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <StepFormSection title="Comorbidities & Clinical Considerations">
+      {checkboxGroup('comorbidities', 'Comorbidities', [
+        'None',
+        'Type 2 Diabetes',
+        'Hypertension',
+        'Heart disease',
+        'CKD',
+        'Liver disease',
+        'Osteoporosis / Osteopenia',
+        'History of cancer (specify type in notes)',
+        'Depression/Anxiety',
+        'Other',
+      ], data, updateData, true)}
+      {checkboxGroup('extraintestinalManif', 'Extraintestinal Manifestations', [
+        'None',
+        'Uveitis / eye problems',
+        'Arthralgia / Arthritis',
+        'Erythema nodosum',
+        'Pyoderma Gangrenosum',
+        'Primary Sclerosing cholangitis',
+      ], data, updateData, true)}
+      {radioGroup('pregnancyPlanning', 'Pregnancy / Family Planning Status', [
+        'Not applicable',
+        'Not planning for pregnancy',
+        'Planning pregnancy within next year',
+        'Currently pregnant',
+        'Currently breast feeding',
+      ], data, updateData, true)}
+    </StepFormSection>
+
+    <InfectionScreeningForm data={data} updateData={updateData} />
+  </div>
+);

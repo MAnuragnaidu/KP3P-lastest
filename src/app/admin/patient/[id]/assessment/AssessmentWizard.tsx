@@ -1,0 +1,684 @@
+'use client';
+
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Image from 'next/image';
+import Link from 'next/link';
+import {
+  AdminStep1, AdminStep2, AdminStep4, AdminStep5,
+  AdminStep6, AdminStep7, AdminStep8, AdminStep9,
+  AdminStep10, AdminStep11, AdminStep12,
+} from './AdminAssessmentSteps';
+import type { PatientWithUser, AssessmentFormState, AssessmentUpdateFn } from '@/types/assessment-form';
+import { getErrorMessage } from '@/lib/get-error-message';
+import { performLogout } from '@/lib/logout-client';
+import {
+  buildAssessmentFormState,
+  buildAssessmentSavePayload,
+} from '@/lib/build-assessment-form-state';
+import {
+  formatAssessmentFieldErrors,
+  isAssessmentStepComplete,
+  validateAssessmentStepFields,
+} from '@/lib/assessment-step-validation';
+import {
+  AssessmentFieldErrorsProvider,
+} from './assessment-field-errors';
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+const stepLabels = [
+  "Basic Info",
+  "Disease Characteristics",
+  "Symptoms",
+  "Investigations",
+  "Radiology",
+  "Treatment History",
+  "Surgeon",
+  "Radiologist",
+  "Dietitian",
+  "Vaccination History",
+  "Screening",
+];
+
+const stepHeadings = [
+  "Patient Characteristics",
+  "Disease Characteristics",
+  "Disease Activity & Symptoms",
+  "Laboratory & Investigations",
+  "Radiology Investigations",
+  "Treatment History",
+  "Surgeon — Surgical History",
+  "Radiologist — Radiology Findings",
+  "Dietitian — Dietary Findings",
+  "Vaccination History",
+  "Comorbidities & Infection Screening",
+];
+
+const ASSESSMENT_TOTAL_STEPS = 11;
+
+/** Map saved step index from prior assessment flows. */
+function mapLegacyAssessmentStep(step: number): number {
+  if (step <= 6) return step;
+  // 8-step flow (before specialist steps): 7 = vaccination, 8 = screening
+  if (step === 7) return 10;
+  if (step === 8 || step === 9) return 11;
+  return Math.min(step, ASSESSMENT_TOTAL_STEPS);
+}
+
+function clampAssessmentStep(step: unknown): number {
+  const n = typeof step === 'number' ? step : parseInt(String(step ?? ''), 10);
+  if (!Number.isFinite(n)) return 1;
+  return mapLegacyAssessmentStep(Math.min(Math.max(n, 1), ASSESSMENT_TOTAL_STEPS));
+}
+
+function completedStepsBefore(step: number): Set<number> {
+  const completed = new Set<number>();
+  for (let i = 1; i < step; i++) completed.add(i);
+  return completed;
+}
+
+function initialAssessmentStep(patient: PatientWithUser): number {
+  if (patient.assessmentComplete) return 1;
+  return clampAssessmentStep(patient.assessmentCurrentStep);
+}
+
+export default function AssessmentWizard({ patient }: { patient: PatientWithUser }) {
+  const router = useRouter();
+  const [mounted, setMounted] = useState(false);
+  const [currentStep, setCurrentStep] = useState(() => initialAssessmentStep(patient));
+  const [completedSteps, setCompletedSteps] = useState<Set<number>>(() =>
+    completedStepsBefore(initialAssessmentStep(patient)),
+  );
+  const [formData, setFormData] = useState<AssessmentFormState>(() => buildAssessmentFormState(patient));
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSavingStep, setIsSavingStep] = useState(false);
+  const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Set<string>>(() => new Set());
+  const [showLogoutDialog, setShowLogoutDialog] = useState(false);
+  const saveInFlightRef = useRef(false);
+  const mainScrollRef = useRef<HTMLDivElement>(null);
+
+  const totalSteps = ASSESSMENT_TOTAL_STEPS;
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setMounted(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    mainScrollRef.current?.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [currentStep]);
+
+  const stepCompletion = useMemo(
+    () => stepLabels.map((_, idx) => isAssessmentStepComplete(idx + 1, formData)),
+    [formData],
+  );
+
+  if (!patient) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', fontFamily: "'Inter', sans-serif", color: '#64748b', fontSize: 15 }}>
+        Patient not found.
+      </div>
+    );
+  }
+
+  if (!mounted) {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '100vh',
+          fontFamily: "'Inter', sans-serif",
+          color: '#64748b',
+          fontSize: 15,
+        }}
+      >
+        Loading assessment...
+      </div>
+    );
+  }
+
+  const updateData: AssessmentUpdateFn = (fields) => {
+    setFormData((prev) => ({ ...prev, ...fields }) as AssessmentFormState);
+    setFieldErrors((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Set(prev);
+      for (const key of Object.keys(fields)) {
+        for (const errKey of prev) {
+          if (errKey === key || errKey.startsWith(`${key}.`)) {
+            next.delete(errKey);
+          }
+        }
+      }
+      return next;
+    });
+  };
+
+  const applyStepValidation = (stepNum: number): boolean => {
+    const { errors } = validateAssessmentStepFields(stepNum, formData);
+    if (errors.length === 0) {
+      setFieldErrors(new Set());
+      setError('');
+      return true;
+    }
+    setFieldErrors(new Set(errors.map((entry) => entry.fieldKey)));
+    setError(`Please fill all mandatory fields before continuing: ${formatAssessmentFieldErrors(errors)}`);
+    return false;
+  };
+
+  const validateCurrentStep = () => applyStepValidation(currentStep);
+
+  const validateAllSteps = (): string | null => {
+    for (let stepNum = 1; stepNum <= totalSteps; stepNum++) {
+      const { errors } = validateAssessmentStepFields(stepNum, formData);
+      if (errors.length > 0) {
+        setFieldErrors(new Set(errors.map((entry) => entry.fieldKey)));
+        setCurrentStep(stepNum);
+        return `Please fix mandatory fields before completing the assessment — Step ${stepNum} (${stepLabels[stepNum - 1]}): ${formatAssessmentFieldErrors(errors)}`;
+      }
+    }
+    setFieldErrors(new Set());
+    return null;
+  };
+
+  const jumpToStep = (target: number) => {
+    if (target === currentStep || target < 1 || target > totalSteps) return;
+    setError('');
+    setFieldErrors(new Set());
+    setCurrentStep(target);
+  };
+
+  const persistProgress = async (overrides?: Record<string, unknown>): Promise<boolean> => {
+    if (saveInFlightRef.current) return false;
+    saveInFlightRef.current = true;
+
+    try {
+      let body: string;
+      try {
+        body = JSON.stringify(buildAssessmentSavePayload(formData, overrides));
+      } catch {
+        setError('Could not save — form data could not be serialized.');
+        return false;
+      }
+
+      if (!body) {
+        setError('Could not save — empty request body.');
+        return false;
+      }
+
+      const res = await fetch(`/api/patient/${patient.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      if (!res.ok) {
+        let msg = 'Failed to save progress';
+        try {
+          const j: unknown = await res.json();
+          if (isRecord(j) && typeof j.error === 'string') msg = j.error;
+        } catch {
+          /* ignore */
+        }
+        setError(msg);
+        return false;
+      }
+      return true;
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        return false;
+      }
+      setError(getErrorMessage(err));
+      return false;
+    } finally {
+      saveInFlightRef.current = false;
+    }
+  };
+
+  const handleNext = async () => {
+    if (!validateCurrentStep()) return;
+    setIsSavingStep(true);
+    setError('');
+    setFieldErrors(new Set());
+    const ok = await persistProgress({ assessmentCurrentStep: currentStep + 1 });
+    setIsSavingStep(false);
+    if (!ok) return;
+    setCompletedSteps((prev) => new Set(prev).add(currentStep));
+    if (currentStep < totalSteps) setCurrentStep((prev) => prev + 1);
+  };
+
+  const handleBack = () => {
+    if (currentStep > 1) {
+      setError('');
+      setFieldErrors(new Set());
+      setCurrentStep((prev) => prev - 1);
+    }
+  };
+
+  /** Persist draft and leave — no per-step validation (partial save). */
+  const handleSaveAndExit = async () => {
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const ok = await persistProgress({ assessmentCurrentStep: currentStep });
+      if (!ok) return;
+      router.push('/admin');
+      router.refresh();
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  /** Last step only: re-validate all steps, then save and return to patient. */
+  const handleCompleteAssessment = async () => {
+    const allStepsError = validateAllSteps();
+    if (allStepsError) {
+      setError(allStepsError);
+      return;
+    }
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const ok = await persistProgress({ assessmentComplete: true, assessmentCurrentStep: totalSteps });
+      if (!ok) return;
+      router.push(`/admin/patient/${patient.id}`);
+      router.refresh();
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleSaveAndLogout = async () => {
+    setIsSubmitting(true);
+    setError('');
+    try {
+      const ok = await persistProgress({ assessmentCurrentStep: currentStep });
+      if (!ok) {
+        setIsSubmitting(false);
+        return;
+      }
+      const logoutResult = await performLogout();
+      if (!logoutResult.ok) {
+        setError(logoutResult.error);
+        setIsSubmitting(false);
+      }
+    } catch (err: unknown) {
+      setError(getErrorMessage(err));
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    setError('');
+    const logoutResult = await performLogout();
+    if (!logoutResult.ok) {
+      setError(logoutResult.error);
+    }
+  };
+
+  return (
+    <>
+      <style>{`
+        .aw-main { padding: 32px 40px; max-width: 100%; overflow-x: hidden; }
+        .aw-stepper { justify-content: space-between; }
+        .aw-bottom-nav { flex-direction: row; }
+
+        @media (max-width: 900px) {
+          .aw-grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+        }
+        @media (max-width: 640px) {
+          .aw-grid-2, .aw-grid-3 { grid-template-columns: 1fr !important; gap: 16px !important; }
+        }
+
+        @media (max-width: 768px) {
+          .aw-main { padding: 16px; }
+          .aw-stepper { overflow-x: auto; padding-bottom: 16px; margin-bottom: 16px; justify-content: flex-start; gap: 20px; -webkit-overflow-scrolling: touch; }
+          .aw-bottom-nav { flex-direction: column; gap: 12px; }
+          .aw-bottom-nav button { width: 100%; margin-left: 0 !important; min-height: 44px; }
+        }
+
+        @media (max-width: 480px) {
+          .aw-top-bar { padding-left: 12px !important; padding-right: 12px !important; flex-wrap: wrap; gap: 8px !important; height: auto !important; min-height: 52px; }
+          .aw-top-bar-brand img { height: 28px !important; }
+          .aw-top-bar-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+        }
+        .aw-top-bar-actions button { min-height: 44px; }
+      `}</style>
+      <div style={{ fontFamily: "'Inter', sans-serif" }} className="flex flex-col min-h-screen w-full bg-white overflow-hidden">
+
+      {/* ── TOP NAV BAR ── */}
+      <div
+        className="aw-top-bar"
+        style={{
+          minHeight: 52,
+        background: '#ffffff',
+        borderBottom: '0.5px solid #e2e8f0',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 24px',
+        flexShrink: 0,
+        zIndex: 10,
+        gap: 10,
+      }}
+      >
+        {/* Brand */}
+        <Link className="aw-top-bar-brand" href="/" style={{ display: 'inline-flex', alignItems: 'center', borderRadius: 8, outline: 'none', flexShrink: 0 }} aria-label="myGastro.AI home">
+          <Image
+            src="/mygastro-logo.png"
+            alt="myGastro.AI"
+            width={230}
+            height={42}
+            priority
+            style={{ width: 'auto', height: 36, objectFit: 'contain' }}
+          />
+        </Link>
+
+        {/* Right: Admin badge + Logout */}
+        <div className="aw-top-bar-actions" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 7,
+            background: '#f1f5f9', borderRadius: 8, padding: '5px 12px',
+          }}>
+            <div style={{
+              width: 24, height: 24, borderRadius: '50%',
+              background: '#0891b2', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 11, fontWeight: 700, color: '#ffffff',
+            }}>A</div>
+            <span style={{ fontSize: 13, fontWeight: 600, color: '#0f172a', fontFamily: "'Inter', sans-serif" }}>Admin</span>
+          </div>
+          <button
+            onClick={() => setShowLogoutDialog(true)}
+            style={{
+              padding: '6px 14px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+              background: '#fff1f2', border: '1px solid #fecdd3', color: '#e11d48',
+              cursor: 'pointer', fontFamily: "'Inter', sans-serif",
+            }}
+          >
+            Log out
+          </button>
+        </div>
+      </div>
+
+      {/* ── MAIN CONTENT ── */}
+      <div className="aw-layout" style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div
+          ref={mainScrollRef}
+          className="aw-main"
+          style={{ flex: 1, display: 'flex', flexDirection: 'column', background: '#fafafa', minWidth: 0, overflowY: 'auto' }}
+        >
+          {/* Horizontal step indicator */}
+          <div
+            className="aw-stepper"
+            role="navigation"
+            aria-label="Assessment steps"
+            style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 28, paddingBottom: 24, borderBottom: '0.5px solid #e2e8f0', position: 'relative' }}
+          >
+            <div style={{ position: 'absolute', top: 15, left: 30, right: 30, height: 2, background: '#e2e8f0', zIndex: 0 }} />
+            {stepLabels.map((label, idx) => {
+              const stepNum = idx + 1;
+              const isActive = stepNum === currentStep;
+              const isFuture = stepNum > currentStep;
+              const isComplete = stepCompletion[idx];
+              const statusColor = isComplete ? '#16a34a' : '#dc2626';
+
+              const circleStyle: React.CSSProperties = isFuture
+                ? {
+                    background: '#ffffff',
+                    border: '2px solid #e2e8f0',
+                    color: '#94a3b8',
+                    boxShadow: 'none',
+                  }
+                : {
+                    background: statusColor,
+                    border: isActive ? '2px solid #2563eb' : 'none',
+                    color: '#ffffff',
+                    boxShadow: isActive
+                      ? '0 0 0 2px #ffffff, 0 0 0 4px #2563eb'
+                      : isComplete
+                        ? '0 2px 8px rgba(22,163,74,0.25)'
+                        : '0 2px 8px rgba(220,38,38,0.2)',
+                  };
+
+              const labelColor = isFuture
+                ? '#94a3b8'
+                : isActive
+                  ? '#2563eb'
+                  : statusColor;
+
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => jumpToStep(stepNum)}
+                  disabled={isActive || isSavingStep || isSubmitting}
+                  aria-current={isActive ? 'step' : undefined}
+                  aria-label={
+                    isFuture
+                      ? `Step ${stepNum}: ${label} (not started)`
+                      : `Step ${stepNum}: ${label}${isComplete ? ' (complete)' : ' (incomplete)'}`
+                  }
+                  title={`Go to ${label}`}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: 6,
+                    zIndex: 1,
+                    minWidth: 56,
+                    border: 'none',
+                    background: 'transparent',
+                    padding: 0,
+                    cursor: isActive || isSavingStep || isSubmitting ? 'default' : 'pointer',
+                  }}
+                >
+                  <div style={{
+                    width: 30,
+                    height: 30,
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    transition: 'all 0.2s',
+                    fontFamily: "'Inter', sans-serif",
+                    ...circleStyle,
+                  }}>
+                    {!isFuture && isComplete
+                      ? <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
+                      : stepNum}
+                  </div>
+                  <span style={{
+                    fontSize: 9,
+                    fontWeight: 700,
+                    textAlign: 'center',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em',
+                    lineHeight: 1.3,
+                    color: labelColor,
+                    fontFamily: "'Inter', sans-serif",
+                  }}>
+                    {label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <h2 style={{
+            fontSize: 20,
+            fontWeight: 700,
+            color: '#0f172a',
+            marginBottom: 20,
+            fontFamily: "'Inter', sans-serif",
+          }}>
+            Clinical Assessment for {patient.name ?? patient.user?.name ?? 'Unknown'}
+          </h2>
+
+          {/* Step heading */}
+          <div style={{ marginBottom: 20 }}>
+            <p style={{ fontSize: 11, fontWeight: 700, color: '#2563eb', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 4, fontFamily: "'Inter', sans-serif" }}>
+              Step {currentStep} of {totalSteps}
+            </p>
+            <h3 style={{ fontSize: 22, fontWeight: 700, color: '#0f172a', fontFamily: "'Inter', sans-serif" }}>{stepHeadings[currentStep - 1]}</h3>
+          </div>
+
+          {/* Form content */}
+          <AssessmentFieldErrorsProvider fieldErrors={fieldErrors}>
+            <div
+              style={{
+                flex: 1,
+                background: '#ffffff',
+                padding: currentStep === 4 || currentStep === 5 ? '12px 16px' : '24px',
+                borderRadius: 12,
+                border: '0.5px solid #e2e8f0',
+                marginBottom: currentStep === 4 || currentStep === 5 ? 12 : 20,
+                fontFamily: "'Inter', sans-serif",
+              }}
+            >
+              {currentStep === 1 && <AdminStep1 data={formData} updateData={updateData} />}
+              {currentStep === 2 && <AdminStep4 data={formData} updateData={updateData} />}
+              {currentStep === 3 && <AdminStep5 data={formData} updateData={updateData} />}
+              {currentStep === 4 && <AdminStep6 data={formData} updateData={updateData} />}
+              {currentStep === 5 && <AdminStep7 data={formData} updateData={updateData} />}
+              {currentStep === 6 && <AdminStep8 data={formData} updateData={updateData} />}
+              {currentStep === 7 && <AdminStep10 data={formData} updateData={updateData} />}
+              {currentStep === 8 && <AdminStep11 data={formData} updateData={updateData} />}
+              {currentStep === 9 && <AdminStep12 data={formData} updateData={updateData} />}
+              {currentStep === 10 && <AdminStep2 data={formData} updateData={updateData} />}
+              {currentStep === 11 && <AdminStep9 data={formData} updateData={updateData} />}
+            </div>
+          </AssessmentFieldErrorsProvider>
+
+          {error && <p style={{ color: '#dc2626', fontSize: 13, marginBottom: 12, fontFamily: "'Inter', sans-serif" }}>{error}</p>}
+
+          {/* Bottom navigation */}
+          <div className="aw-bottom-nav" style={{ display: 'flex', alignItems: 'center', paddingTop: 20, borderTop: '0.5px solid #e2e8f0' }}>
+            {currentStep > 1 && (
+              <button onClick={handleBack} disabled={isSubmitting || isSavingStep} style={{
+                padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                background: '#ffffff', border: '1px solid #e2e8f0', color: '#475569',
+                cursor: 'pointer', transition: 'all 0.2s', fontFamily: "'Inter', sans-serif",
+              }}>
+                Back
+              </button>
+            )}
+            <button onClick={() => void handleSaveAndExit()} disabled={isSubmitting || isSavingStep} style={{
+              padding: '8px 18px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+              background: '#ffffff', border: '1px solid #e2e8f0', color: '#475569',
+              cursor: isSubmitting || isSavingStep ? 'not-allowed' : 'pointer', marginLeft: 'auto', transition: 'all 0.2s',
+              fontFamily: "'Inter', sans-serif",
+            }}>
+              {isSubmitting ? 'Saving...' : 'Save & Exit'}
+            </button>
+            {currentStep < totalSteps ? (
+              <button
+                type="button"
+                onClick={() => void handleNext()}
+                disabled={isSavingStep || isSubmitting}
+                style={{
+                padding: '8px 22px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                background: '#2563eb', border: 'none', color: '#ffffff',
+                cursor: isSavingStep || isSubmitting ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+                boxShadow: '0 4px 12px rgba(37,99,235,0.25)', transition: 'all 0.2s',
+                fontFamily: "'Inter', sans-serif",
+                opacity: isSavingStep ? 0.85 : 1,
+              }}
+              >
+                {isSavingStep ? 'Saving…' : 'Next'} {!isSavingStep ? <span>→</span> : null}
+              </button>
+            ) : (
+              <button onClick={() => void handleCompleteAssessment()} disabled={isSubmitting || isSavingStep} style={{
+                padding: '8px 22px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                background: '#2563eb', border: 'none', color: '#ffffff',
+                cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                boxShadow: '0 4px 12px rgba(37,99,235,0.25)', transition: 'all 0.2s',
+                fontFamily: "'Inter', sans-serif",
+              }}>
+                {isSubmitting ? 'Saving...' : 'Complete Assessment'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── LOGOUT CONFIRMATION DIALOG ── */}
+      {showLogoutDialog && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100,
+        }}>
+          <div style={{
+            background: '#ffffff', borderRadius: 16, padding: '32px 28px',
+            width: 380, fontFamily: "'Inter', sans-serif",
+          }}>
+            {/* Icon */}
+            <div style={{
+              width: 48, height: 48, borderRadius: 12, background: '#fff1f2',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+            }}>
+              <svg width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="#e11d48" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </div>
+
+            <h2 style={{ fontSize: 17, fontWeight: 700, color: '#0f172a', marginBottom: 6 }}>Log out?</h2>
+            <p style={{ fontSize: 13, color: '#64748b', lineHeight: 1.6, marginBottom: 24 }}>
+              You have unsaved changes. Would you like to save your progress before logging out?
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                onClick={handleSaveAndLogout}
+                disabled={isSubmitting}
+                style={{
+                  padding: '10px 16px', borderRadius: 9, fontSize: 13, fontWeight: 700,
+                  background: '#2563eb', border: 'none', color: '#ffffff',
+                  cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                  fontFamily: "'Inter', sans-serif", width: '100%',
+                }}
+              >
+                {isSubmitting ? 'Saving...' : 'Save & Log out'}
+              </button>
+
+              <button
+                onClick={handleLogout}
+                disabled={isSubmitting}
+                style={{
+                  padding: '10px 16px', borderRadius: 9, fontSize: 13, fontWeight: 600,
+                  background: '#fff1f2', border: '1px solid #fecdd3', color: '#e11d48',
+                  cursor: 'pointer', fontFamily: "'Inter', sans-serif", width: '100%',
+                }}
+              >
+                Log out without saving
+              </button>
+
+              <button
+                onClick={() => setShowLogoutDialog(false)}
+                style={{
+                  padding: '10px 16px', borderRadius: 9, fontSize: 13, fontWeight: 600,
+                  background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569',
+                  cursor: 'pointer', fontFamily: "'Inter', sans-serif", width: '100%',
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+    </>
+  );
+}
