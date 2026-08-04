@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
 import AuthForm from './AuthForm';
+import IntakeFormLink from './IntakeFormLink';
 import { getAppSession } from '@/lib/auth/session';
 import { getIntakeAppUrl } from '@/lib/intake-app-url';
 
@@ -50,7 +51,8 @@ export default async function Home() {
             AI-Powered Gastroenterology Platform
           </p>
         </div>
-        <AuthForm intakeAppUrl={intakeAppUrl} />
+        <AuthForm />
+        <IntakeFormLink />
       </div>
       <footer className="mt-8 text-center text-xs" style={{ color: '#475569' }}>
         © 2026{' '}

@@ -1,28 +1,26 @@
-function isLocalhostUrl(url: string): boolean {
+function normalizeEnvUrl(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim().replace(/^['"]|['"]$/g, '');
+  if (!trimmed) return null;
   try {
-    const { hostname } = new URL(url);
-    return hostname === 'localhost' || hostname === '127.0.0.1';
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.toString().replace(/\/$/, '');
   } catch {
-    return false;
+    return null;
   }
 }
 
 /**
- * Patient intake app URL (server-side).
- * Set INTAKE_APP_URL (preferred) or NEXT_PUBLIC_INTAKE_APP_URL — no code fallback.
+ * Patient intake app URL (server-side only).
+ * Set INTAKE_APP_URL on Vercel (runtime, no rebuild needed when changed).
+ * NEXT_PUBLIC_INTAKE_APP_URL is a build-time fallback.
  */
 export function getIntakeAppUrl(): string | null {
-  const configured =
-    process.env.INTAKE_APP_URL?.trim() ||
-    process.env.NEXT_PUBLIC_INTAKE_APP_URL?.trim();
-
-  if (!configured) return null;
-
-  if (process.env.NODE_ENV === 'production' && isLocalhostUrl(configured)) {
-    return null;
-  }
-
-  return configured;
+  return (
+    normalizeEnvUrl(process.env.INTAKE_APP_URL) ||
+    normalizeEnvUrl(process.env.NEXT_PUBLIC_INTAKE_APP_URL)
+  );
 }
 
 export function isIntakeAppAvailable(): boolean {

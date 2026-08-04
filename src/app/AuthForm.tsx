@@ -4,12 +4,7 @@ import { useState } from 'react';
 import { getErrorMessage } from '@/lib/get-error-message';
 import { ADMIN_LOGIN_EMAIL } from '@/lib/auth-credentials';
 
-type Props = {
-  /** Resolved on the server from INTAKE_APP_URL — avoids build-time localhost fallback on Vercel. */
-  intakeAppUrl?: string | null;
-};
-
-export default function AuthForm({ intakeAppUrl }: Props) {
+export default function AuthForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -130,30 +125,6 @@ export default function AuthForm({ intakeAppUrl }: Props) {
           {loading ? 'Please wait...' : 'Sign In'}
         </button>
       </form>
-
-      {intakeAppUrl && (
-        <>
-          <div style={{ marginTop: '1.25rem', marginBottom: '1rem' }}>
-            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-              <div style={{ flex: 1, borderTop: '1px solid #e5e7eb' }} />
-              <span style={{ padding: '0 0.75rem', fontSize: '0.75rem', color: '#9ca3af', whiteSpace: 'nowrap' }}>
-                OR
-              </span>
-              <div style={{ flex: 1, borderTop: '1px solid #e5e7eb' }} />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="btn btn-secondary w-full"
-            onClick={() => {
-              window.location.href = intakeAppUrl;
-            }}
-          >
-            Patient Intake Form
-          </button>
-        </>
-      )}
     </div>
   );
 }
