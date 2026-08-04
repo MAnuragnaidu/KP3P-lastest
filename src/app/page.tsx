@@ -3,19 +3,29 @@ import Image from 'next/image';
 import Link from 'next/link';
 import AuthForm from './AuthForm';
 import { getAppSession } from '@/lib/auth/session';
+import { getIntakeAppUrl } from '@/lib/intake-app-url';
 
 export const metadata = {
   title: 'MyGastro.Ai - Patient Intake',
   description: 'Patient Intake Web App for MyGastro.Ai',
 };
 
+export const dynamic = 'force-dynamic';
+
 export default async function Home() {
+  const intakeAppUrl = getIntakeAppUrl();
   const session = await getAppSession();
 
   if (session.isAuthenticated) {
     if (session.role === 'ADMIN') {
       redirect('/admin');
-    } else {
+    }
+
+    if (intakeAppUrl) {
+      redirect(intakeAppUrl);
+    }
+
+    if (process.env.NODE_ENV === 'development') {
       redirect('/form');
     }
   }
@@ -40,7 +50,7 @@ export default async function Home() {
             AI-Powered Gastroenterology Platform
           </p>
         </div>
-        <AuthForm />
+        <AuthForm intakeAppUrl={intakeAppUrl} />
       </div>
       <footer className="mt-8 text-center text-xs" style={{ color: '#475569' }}>
         © 2026{' '}
