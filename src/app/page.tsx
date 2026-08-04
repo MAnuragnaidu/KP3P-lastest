@@ -23,7 +23,7 @@ export default async function Home() {
     }
 
     if (intakeAppUrl) {
-      redirect(intakeAppUrl);
+      redirect('/intake');
     }
 
     if (process.env.NODE_ENV === 'development') {

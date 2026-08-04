@@ -3,12 +3,10 @@ import Link from 'next/link';
 import MultiStepForm from './MultiStepForm';
 import LogoutButton from '../admin/LogoutButton';
 import { getAppSession } from '@/lib/auth/session';
-import { getIntakeAppUrl } from '@/lib/intake-app-url';
 
 export default async function FormPage() {
   if (process.env.NODE_ENV === 'production') {
-    const intakeUrl = getIntakeAppUrl();
-    redirect(intakeUrl ?? '/');
+    redirect('/intake');
   }
 
   const session = await getAppSession();

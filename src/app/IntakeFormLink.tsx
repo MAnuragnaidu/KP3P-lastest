@@ -1,9 +1,7 @@
-import { getIntakeAppUrl } from '@/lib/intake-app-url';
+import Link from 'next/link';
 
+/** Always visible — redirects via /intake which reads INTAKE_APP_URL at runtime on Vercel. */
 export default function IntakeFormLink() {
-  const intakeAppUrl = getIntakeAppUrl();
-  if (!intakeAppUrl) return null;
-
   return (
     <>
       <div style={{ marginTop: '1.25rem', marginBottom: '1rem' }}>
@@ -23,9 +21,9 @@ export default function IntakeFormLink() {
         </div>
       </div>
 
-      <a href={intakeAppUrl} className="btn btn-secondary w-full" style={{ textAlign: 'center' }}>
+      <Link href="/intake" className="btn btn-secondary w-full" style={{ textAlign: 'center' }}>
         Patient Intake Form
-      </a>
+      </Link>
     </>
   );
 }

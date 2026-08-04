@@ -1,7 +1,10 @@
 function normalizeEnvUrl(raw: string | undefined): string | null {
   if (!raw) return null;
-  const trimmed = raw.trim().replace(/^['"]|['"]$/g, '');
+  let trimmed = raw.trim().replace(/^['"]|['"]$/g, '');
   if (!trimmed) return null;
+  if (!/^https?:\/\//i.test(trimmed)) {
+    trimmed = `https://${trimmed}`;
+  }
   try {
     const parsed = new URL(trimmed);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
@@ -11,16 +14,22 @@ function normalizeEnvUrl(raw: string | undefined): string | null {
   }
 }
 
+const INTAKE_URL_ENV_KEYS = [
+  'INTAKE_APP_URL',
+  'NEXT_PUBLIC_INTAKE_APP_URL',
+  'PATIENT_INTAKE_URL',
+] as const;
+
 /**
- * Patient intake app URL (server-side only).
- * Set INTAKE_APP_URL on Vercel (runtime, no rebuild needed when changed).
- * NEXT_PUBLIC_INTAKE_APP_URL is a build-time fallback.
+ * Patient intake app URL (server-side).
+ * Set INTAKE_APP_URL on Vercel — read at request time via /intake redirect.
  */
 export function getIntakeAppUrl(): string | null {
-  return (
-    normalizeEnvUrl(process.env.INTAKE_APP_URL) ||
-    normalizeEnvUrl(process.env.NEXT_PUBLIC_INTAKE_APP_URL)
-  );
+  for (const key of INTAKE_URL_ENV_KEYS) {
+    const url = normalizeEnvUrl(process.env[key]);
+    if (url) return url;
+  }
+  return null;
 }
 
 export function isIntakeAppAvailable(): boolean {
